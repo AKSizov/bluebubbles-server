@@ -1,11 +1,11 @@
-import { Message } from "@server/databases/imessage/entity/Message";
-import { generateUuid, waitMs } from "@server/helpers/utils";
+import { waitMs } from "@server/helpers/utils";
 import { MessageBatchStatus } from ".";
 import { MessageBatch } from "./MessageBatch";
+import { MessageBatchItem } from "./MessageBatchItem";
 
 export interface BatchConfig {
     maxBatchSize?: number;
-    maxBatches?: number;
+    maxBatchCache?: number;
     batchIntervalMs?: number;
 }
 
@@ -16,7 +16,9 @@ export class UnarchiveBatcher {
 
     private batchIntervalMs = 10;
 
-    private maxBatches = 20;
+    private maxBatchCache = 5;
+
+    // private isProcessing = false;
 
     /**
      * Checks if the batcher is not processing anything
@@ -28,7 +30,7 @@ export class UnarchiveBatcher {
     }
 
     /**
-     * Checks if the batches is processing anything
+     * Checks if the batcher is processing anything
      *
      * @returns True if the batcher is processing, false otherwise
      */
@@ -49,13 +51,13 @@ export class UnarchiveBatcher {
      * Checks if the batcher is full
      */
     get isFull(): boolean {
-        return this.batches.length >= this.maxBatches;
+        return this.batches.length >= this.maxBatchCache;
     }
 
     constructor(batchConfig: BatchConfig) {
         this.maxBatchSize = batchConfig?.maxBatchSize ?? this.maxBatchSize;
         this.batchIntervalMs = batchConfig?.batchIntervalMs ?? this.batchIntervalMs;
-        this.maxBatches = batchConfig?.maxBatches ?? this.maxBatches;
+        this.maxBatchCache = batchConfig?.maxBatchCache ?? this.maxBatchCache;
     }
 
     /**
@@ -66,13 +68,14 @@ export class UnarchiveBatcher {
      * @returns The newly created batch
      */
     private createNewBatch() {
-        const batch = new MessageBatch(this.maxBatchSize, this.batchIntervalMs, [this.pendingListener]);
+        const batch = new MessageBatch(this.maxBatchSize, this.batchIntervalMs, [
+            (_: MessageBatch) => {
+                this.processNextBatch();
+            }
+        ]);
+
         this.batches.push(batch);
         return batch;
-    }
-
-    private pendingListener(_: MessageBatch) {
-        this.processNextBatch();
     }
 
     /**
@@ -116,19 +119,10 @@ export class UnarchiveBatcher {
      * @returns The batch that the message was added to
      * @throws If the batcher is full
      */
-    public add(message: Message): MessageBatch {
+    public add(message: MessageBatchItem): MessageBatch {
         if (!message) return null;
-
-        // If full, try to prune branches
-        if (this.isFull) {
-            this.pruneBatches();
-
-            // If the batcher is still full, throw an error
-            if (this.isFull) throw new Error("Batcher is full");
-        }
-
         const batch = this.getNextAvailableBatch();
-        batch.items.push(message);
+        batch.addItem(message);
         return batch;
     }
 
@@ -140,10 +134,21 @@ export class UnarchiveBatcher {
      */
     private async processNextBatch(wasProcessing = false): Promise<void> {
         const batch = this.getNextPendingBatch();
-        if ((!wasProcessing && this.isProcessing) || !batch) return;
+
+        // If we were processing but don't have a next batch, we're done processing for now
+        if (wasProcessing && !batch) {
+            // this.isProcessing = false;
+
+            // If full, try to prune branches
+            if (this.isFull) this.pruneBatches();
+            return;
+        }
+
+        // If we're already processing, don't do anything
+        if (this.isProcessing && !wasProcessing) return;
 
         // Process the next batch
-        console.log(`Processing batch of size: ${batch.items.length}`);
+        // this.isProcessing = true;
         await batch.process();
 
         // Wait the interval time before processing the next batch
@@ -169,7 +174,7 @@ export class UnarchiveBatcher {
         const tries = [30000, 10000, 5000, 0];
         for (const tryMs of tries) {
             this.pruneByAge(tryMs);
-            if (this.batches.length <= this.maxBatches) break;
+            if (!this.isFull) break;
         }
     }
 

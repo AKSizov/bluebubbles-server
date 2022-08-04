@@ -122,11 +122,18 @@ export class MessageSerializer {
             chats.push(chatRes);
         }
 
+        let attrBody = null;
+        try {
+            attrBody = await message.attributedBody;
+        } catch (ex) {
+            // Ignore
+        }
+
         return {
             originalROWID: message.ROWID,
             guid: message.guid,
             text: message.text,
-            attributedBody: await message.attributedBody,
+            attributedBody: attrBody,
             handle: message.handle ? await getHandleResponse(message.handle) : null,
             handleId: message.handleId,
             otherHandle: message.otherHandle,

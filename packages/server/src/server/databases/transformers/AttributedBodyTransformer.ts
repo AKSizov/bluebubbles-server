@@ -1,19 +1,21 @@
+import { isEmpty } from "@server/helpers/utils";
 import { Server } from "@server/index";
+import { MessageBatchItem } from "@server/services/objCHelperService/MessageBatchItem";
 import { ValueTransformer } from "typeorm";
-import type { Message } from "../imessage/entity/Message";
 
-export const AttributedBodyTransformer = (message: Message): ValueTransformer => {
-    return {
-        from: _ => {
-            try {
-                // This is wrapped in a try because it can throw an error if full
-                const batch = Server().objcBatcher.add(message);
-                if (!batch) return null;
-                return batch.waitForCompletion();
-            } catch (ex) {
-                return null;
-            }
-        },
-        to: null
-    };
+export const AttributedBodyTransformer: ValueTransformer = {
+    from: attributedBody => {
+        if (isEmpty(attributedBody)) return null;
+
+        try {
+            // This is wrapped in a try because it can throw an error if full
+            const batchItem = new MessageBatchItem(attributedBody);
+            const batch = Server().objcBatcher.add(batchItem);
+            if (!batch) return null;
+            return batchItem.waitForCompletion();
+        } catch (ex) {
+            return null;
+        }
+    },
+    to: null
 };

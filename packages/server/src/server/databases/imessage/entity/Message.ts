@@ -106,7 +106,7 @@ export class Message {
     @Column({
         type: "blob",
         nullable: true,
-        transformer: AttributedBodyTransformer(this) // TODO: This will be undefined. Find another way to do it
+        transformer: AttributedBodyTransformer
     })
     attributedBody: Promise<NodeJS.Dict<any>>;
 

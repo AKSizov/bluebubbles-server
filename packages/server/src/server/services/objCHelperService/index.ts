@@ -3,6 +3,7 @@ import { isNotEmpty } from "@server/helpers/utils";
 import { Message } from "@server/databases/imessage/entity/Message";
 import { MessageResponse } from "@server/types";
 import { Server } from "@server";
+import { MessageBatchItem } from "./MessageBatchItem";
 
 export enum MessageBatchStatus {
     FILLING = "filling", // The batch is being filled with messages
@@ -16,16 +17,16 @@ export enum MessageBatchStatus {
  * A class that handles the communication with the swift helper process.
  */
 export class ObjCHelperService {
-    static async bulkDeserializeAttributedBody(messages: Message[] | MessageResponse[]): Promise<NodeJS.Dict<any>> {
+    static async bulkDeserializeAttributedBody(bodies: MessageBatchItem[]): Promise<NodeJS.Dict<any>> {
         const helperPath = `${FileSystem.resources}/bluebubblesObjcHelper`;
 
         try {
             const msgs = [];
-            for (const i of messages) {
-                if (isNotEmpty(i.attributedBody)) {
-                    const buff = Buffer.from(i.attributedBody);
+            for (const i of bodies) {
+                if (isNotEmpty(i.body)) {
+                    const buff = Buffer.from(i.body);
                     msgs.push({
-                        id: i.guid,
+                        id: i.id,
                         payload: buff.toString("base64")
                     });
                 }

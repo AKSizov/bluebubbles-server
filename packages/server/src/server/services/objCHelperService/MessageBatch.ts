@@ -1,21 +1,15 @@
-import { Message } from "@server/databases/imessage/entity/Message";
 import { generateUuid } from "@server/helpers/utils";
 import { MessageBatchStatus, ObjCHelperService } from ".";
+import { MessageBatchItem } from "./MessageBatchItem";
 
 export class MessageBatch {
     readonly id: string;
 
     status: MessageBatchStatus;
 
-    items: Message[];
+    items: MessageBatchItem[];
 
     completedAt: number = null;
-
-    private promise: Promise<NodeJS.Dict<any>> = null;
-
-    private resolve: (value: NodeJS.Dict<any>) => void;
-
-    private reject: (reason?: Error) => void;
 
     private timeout: NodeJS.Timer;
 
@@ -32,12 +26,6 @@ export class MessageBatch {
         this.status = MessageBatchStatus.FILLING;
         this.items = [];
 
-        // Setup the promise for this batch
-        this.promise = new Promise((resolve, reject) => {
-            this.resolve = resolve;
-            this.reject = reject;
-        });
-
         // Setup the timeout for this batch
         this.timeout = setTimeout(() => {
             this.markReadyForProcessing();
@@ -49,7 +37,7 @@ export class MessageBatch {
      *
      * @param item The Message item to add
      */
-    addItem(item: Message) {
+    addItem(item: MessageBatchItem) {
         this.items.push(item);
 
         // If we are full after adding the item,
@@ -77,17 +65,36 @@ export class MessageBatch {
      */
     async process() {
         this.status = MessageBatchStatus.PROCESSING;
+        const noResponseErr = "No response from Helper Service";
+        let finalStatus = MessageBatchStatus.FAILED;
 
         try {
-            const data = await ObjCHelperService.bulkDeserializeAttributedBody(this.items);
-            this.status = MessageBatchStatus.COMPLETED;
-            this.completedAt = new Date().getTime();
-            this.resolve(data);
+            const result = await ObjCHelperService.bulkDeserializeAttributedBody(this.items);
+
+            // Iterate over the results, and match them to the batch items
+            for (const item of result?.data ?? []) {
+                const batchItem = this.items.find(i => i.id === item.id);
+                if (batchItem) {
+                    batchItem.complete(item?.body);
+                }
+            }
+
+            finalStatus = MessageBatchStatus.COMPLETED;
         } catch (ex: any) {
-            this.status = MessageBatchStatus.FAILED;
-            this.completedAt = new Date().getTime();
-            this.reject(ex);
+            // Do nothing
         }
+
+        this.rejectIncompleteItems(noResponseErr);
+        this.completedAt = new Date().getTime();
+        this.status = finalStatus;
+    }
+
+    rejectIncompleteItems(reason: string) {
+        this.items.forEach(item => {
+            if (!item.isComplete) {
+                item.fail(new Error(reason));
+            }
+        });
     }
 
     /**
@@ -96,7 +103,7 @@ export class MessageBatch {
      * @returns The batch promise
      */
     async waitForCompletion(): Promise<NodeJS.Dict<any>> {
-        return await this.promise;
+        return await Promise.all(this.items.map(async item => await item.waitForCompletion()));
     }
 
     /**
@@ -118,7 +125,7 @@ export class MessageBatch {
      * Rejects the promise and clears all pending listeners
      */
     flush(error = "Batch was flushed") {
-        this.reject(new Error(error));
+        this.rejectIncompleteItems(error);
         this.removeAllPendingListeners();
     }
 }
