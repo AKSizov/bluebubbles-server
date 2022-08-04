@@ -4,6 +4,14 @@ import { Message } from "@server/databases/imessage/entity/Message";
 import { MessageResponse } from "@server/types";
 import { Server } from "@server";
 
+export enum MessageBatchStatus {
+    FILLING = "filling", // The batch is being filled with messages
+    PENDING = "pending", // The batch is waiting to be processed
+    PROCESSING = "processing", // The batch is being processed
+    COMPLETED = "completed", // The batch has been completed successfully
+    FAILED = "failed" // The batch has failed
+}
+
 /**
  * A class that handles the communication with the swift helper process.
  */

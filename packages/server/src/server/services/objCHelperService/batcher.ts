@@ -1,23 +1,7 @@
 import { Message } from "@server/databases/imessage/entity/Message";
 import { generateUuid, waitMs } from "@server/helpers/utils";
-import { ObjCHelperService } from ".";
-
-export enum MessageBatchStatus {
-    PENDING = "pending",
-    PROCESSING = "processing",
-    COMPLETED = "completed",
-    FAILED = "failed"
-}
-
-export type MessageBatch = {
-    id: string;
-    status: MessageBatchStatus;
-    items: Message[];
-    promise: Promise<NodeJS.Dict<any>>;
-    completedAt: number;
-    resolve: (value: NodeJS.Dict<any>) => void;
-    reject: (reason?: Error) => void;
-};
+import { MessageBatchStatus } from ".";
+import { MessageBatch } from "./MessageBatch";
 
 export interface BatchConfig {
     maxBatchSize?: number;
@@ -61,6 +45,13 @@ export class UnarchiveBatcher {
         return !!this.getNextPendingBatch();
     }
 
+    /**
+     * Checks if the batcher is full
+     */
+    get isFull(): boolean {
+        return this.batches.length >= this.maxBatches;
+    }
+
     constructor(batchConfig: BatchConfig) {
         this.maxBatchSize = batchConfig?.maxBatchSize ?? this.maxBatchSize;
         this.batchIntervalMs = batchConfig?.batchIntervalMs ?? this.batchIntervalMs;
@@ -75,25 +66,13 @@ export class UnarchiveBatcher {
      * @returns The newly created batch
      */
     private createNewBatch() {
-        const newBatch: MessageBatch = {
-            id: generateUuid(),
-            items: [],
-            status: MessageBatchStatus.PENDING,
-            promise: null,
-            resolve: null,
-            reject: null,
-            completedAt: null
-        };
+        const batch = new MessageBatch(this.maxBatchSize, this.batchIntervalMs, [this.pendingListener]);
+        this.batches.push(batch);
+        return batch;
+    }
 
-        // Setup the promise for this batch
-        newBatch.promise = new Promise((resolve, reject) => {
-            newBatch.resolve = resolve;
-            newBatch.reject = reject;
-        });
-
-        // Adds the new batch to the list of batches
-        this.batches.push(newBatch);
-        return newBatch;
+    private pendingListener(_: MessageBatch) {
+        this.processNextBatch();
     }
 
     /**
@@ -122,9 +101,7 @@ export class UnarchiveBatcher {
      */
     private getNextAvailableBatch() {
         // The next batch must be pending and not full
-        let batch = this.batches.find(
-            batch => batch.items.length < this.maxBatchSize && batch.status === MessageBatchStatus.PENDING
-        );
+        let batch = this.batches.find(batch => batch.status === MessageBatchStatus.FILLING);
         if (!batch) {
             batch = this.createNewBatch();
         }
@@ -137,8 +114,17 @@ export class UnarchiveBatcher {
      *
      * @param message The message to queue up processing for
      * @returns The batch that the message was added to
+     * @throws If the batcher is full
      */
     public add(message: Message): MessageBatch {
+        // If full, try to prune branches
+        if (this.isFull) {
+            this.pruneBatches();
+
+            // If the batcher is still full, throw an error
+            if (this.isFull) throw new Error("Batcher is full");
+        }
+
         const batch = this.getNextAvailableBatch();
         batch.items.push(message);
 
@@ -158,20 +144,10 @@ export class UnarchiveBatcher {
         const batch = this.getNextPendingBatch();
         if ((!wasProcessing && this.isProcessing) || !batch) return;
 
-        batch.status = MessageBatchStatus.PROCESSING;
+        // Process the next batch
+        await batch.process();
 
-        try {
-            const data = await ObjCHelperService.bulkDeserializeAttributedBody(batch.items);
-            batch.status = MessageBatchStatus.COMPLETED;
-            batch.completedAt = new Date().getTime();
-            batch.resolve(data);
-        } catch (ex: any) {
-            batch.status = MessageBatchStatus.FAILED;
-            batch.completedAt = new Date().getTime();
-            batch.reject(ex);
-        }
-
-        this.pruneBatches();
+        // Wait the interval time before processing the next batch
         await waitMs(this.batchIntervalMs);
         this.processNextBatch(true);
     }
@@ -196,16 +172,6 @@ export class UnarchiveBatcher {
             this.pruneByAge(tryMs);
             if (this.batches.length <= this.maxBatches) break;
         }
-
-        // If we still are at our max, prune the oldest, but reject them first
-        if (this.batches.length > this.maxBatches) {
-            const oldest = this.batches.slice(this.maxBatches, this.batches.length);
-            oldest.forEach(batch => {
-                batch.reject(new Error("Batch was pruned"));
-            });
-
-            this.batches = this.batches.slice(0, this.maxBatches);
-        }
     }
 
     /**
@@ -229,7 +195,7 @@ export class UnarchiveBatcher {
         // Reject all the non-completed batches
         const batches = this.batches.filter(batch => !this.isBatchFinished(batch));
         batches.forEach(batch => {
-            batch.reject(new Error("Batch was flushed"));
+            batch.flush();
         });
 
         // Clear the batches
