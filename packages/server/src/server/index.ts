@@ -57,6 +57,7 @@ import { OutgoingMessageManager } from "./managers/outgoingMessageManager";
 import { requestContactPermission } from "./utils/PermissionUtils";
 import { AlertsInterface } from "./api/v1/interfaces/alertsInterface";
 import { MessageSerializer } from "./api/v1/serializers/MessageSerializer";
+import { UnarchiveBatcher } from "./services/objCHelperService/batcher";
 
 const findProcess = require("find-process");
 
@@ -146,6 +147,8 @@ class BlueBubblesServer extends EventEmitter {
 
     region: string | null;
 
+    objcBatcher: UnarchiveBatcher;
+
     /**
      * Constructor to just initialize everything to null pretty much
      *
@@ -187,6 +190,11 @@ class BlueBubblesServer extends EventEmitter {
         this.isStopping = false;
 
         this.region = null;
+        this.objcBatcher = new UnarchiveBatcher({
+            maxBatchSize: 1000,
+            maxBatches: 20,
+            batchIntervalMs: 10
+        });
     }
 
     emitToUI(event: string, data: any) {

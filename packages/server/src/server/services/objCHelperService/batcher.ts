@@ -117,6 +117,8 @@ export class UnarchiveBatcher {
      * @throws If the batcher is full
      */
     public add(message: Message): MessageBatch {
+        if (!message) return null;
+
         // If full, try to prune branches
         if (this.isFull) {
             this.pruneBatches();
@@ -127,10 +129,6 @@ export class UnarchiveBatcher {
 
         const batch = this.getNextAvailableBatch();
         batch.items.push(message);
-
-        setTimeout(() => {
-            this.processNextBatch();
-        });
         return batch;
     }
 
@@ -145,6 +143,7 @@ export class UnarchiveBatcher {
         if ((!wasProcessing && this.isProcessing) || !batch) return;
 
         // Process the next batch
+        console.log(`Processing batch of size: ${batch.items.length}`);
         await batch.process();
 
         // Wait the interval time before processing the next batch

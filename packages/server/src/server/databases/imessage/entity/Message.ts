@@ -11,6 +11,7 @@ import { Chat, getChatResponse } from "@server/databases/imessage/entity/Chat";
 import { Attachment, getAttachmentResponse } from "@server/databases/imessage/entity/Attachment";
 import { isMinBigSur, isMinCatalina, isMinHighSierra, isMinSierra, sanitizeStr } from "@server/helpers/utils";
 import { invisibleMediaChar } from "@server/services/httpService/constants";
+import { AttributedBodyTransformer } from "@server/databases/transformers/AttributedBodyTransformer";
 
 @Entity("message")
 export class Message {
@@ -104,9 +105,10 @@ export class Message {
 
     @Column({
         type: "blob",
-        nullable: true
+        nullable: true,
+        transformer: AttributedBodyTransformer(this) // TODO: This will be undefined. Find another way to do it
     })
-    attributedBody: Blob;
+    attributedBody: Promise<NodeJS.Dict<any>>;
 
     @Column({ type: "integer", nullable: true, default: 0 })
     version: number;
