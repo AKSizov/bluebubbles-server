@@ -1,3 +1,4 @@
+import { Server } from "@server";
 import { waitMs } from "@server/helpers/utils";
 import { MessageBatchStatus } from ".";
 import { MessageBatch } from "./MessageBatch";
@@ -9,7 +10,7 @@ export interface BatchConfig {
     batchIntervalMs?: number;
 }
 
-export class UnarchiveBatcher {
+export class UnarchiverBatcher {
     private batches: Array<MessageBatch> = [];
 
     private maxBatchSize = 1000;
@@ -17,8 +18,6 @@ export class UnarchiveBatcher {
     private batchIntervalMs = 10;
 
     private maxBatchCache = 5;
-
-    // private isProcessing = false;
 
     /**
      * Checks if the batcher is not processing anything
@@ -137,18 +136,16 @@ export class UnarchiveBatcher {
 
         // If we were processing but don't have a next batch, we're done processing for now
         if (wasProcessing && !batch) {
-            // this.isProcessing = false;
-
             // If full, try to prune branches
             if (this.isFull) this.pruneBatches();
             return;
         }
 
         // If we're already processing, don't do anything
-        if (this.isProcessing && !wasProcessing) return;
+        if ((this.isProcessing && !wasProcessing) || !batch) return;
 
         // Process the next batch
-        // this.isProcessing = true;
+        Server().log(`[UnarchiverBatcher] Processing batch of ${batch.items.length} items...`);
         await batch.process();
 
         // Wait the interval time before processing the next batch
