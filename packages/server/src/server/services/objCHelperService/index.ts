@@ -8,7 +8,7 @@ import { Server } from "@server";
  * A class that handles the communication with the swift helper process.
  */
 export class ObjCHelperService {
-    static async bulkDeserializeAttributedBody(messages: Message[] | MessageResponse[]): Promise<any[]> {
+    static async bulkDeserializeAttributedBody(messages: Message[] | MessageResponse[]): Promise<NodeJS.Dict<any>> {
         const helperPath = `${FileSystem.resources}/bluebubblesObjcHelper`;
 
         try {
