@@ -33,14 +33,12 @@ export class SwiftHelperService {
         // we should listen to stdout data
         // so we can forward to the bb logger
         this.child.stdout.on("data", (data: string) => {
-            console.log("STDOUT");
             try {
                 const msg = JSON.parse(data);
-                console.log(msg);
                 if (msg?.id) {
                     const task = this.tasks.find(task => task.id === msg.id);
                     if (task) {
-                        task.resolve(msg?.data);
+                        task.resolve(msg);
                     }
                 }
             } catch (ex) {

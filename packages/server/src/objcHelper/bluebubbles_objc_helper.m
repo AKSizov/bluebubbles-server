@@ -119,7 +119,6 @@ void handleCommand(NSString *userInput) {
 
             NSData *dataOutput = [NSJSONSerialization dataWithJSONObject:outputDict options:0 error:&error];
             NSString *strOutput = [[NSString alloc]initWithData:dataOutput encoding:NSUTF8StringEncoding];
-            NSLog(@"Printing results to stdout...");
             fprintf(stdout, "%s\n", [strOutput UTF8String]);
         }
     }
@@ -134,6 +133,7 @@ int main(int argc, char** argv)
     while (true) {
         char *userInput = readline("> ");
         handleCommand([NSString stringWithUTF8String:userInput]);
+        fflush(stdout);
         free(userInput);
     }
     
