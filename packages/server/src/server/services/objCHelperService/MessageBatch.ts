@@ -70,9 +70,7 @@ export class MessageBatch {
         let finalStatus = MessageBatchStatus.FAILED;
 
         try {
-            console.log("1");
             const result = await Server().objcHelper.deserializeAttributedBody(this.items);
-            console.log("2");
 
             // Iterate over the results, and match them to the batch items
             for (const item of result?.data ?? []) {
