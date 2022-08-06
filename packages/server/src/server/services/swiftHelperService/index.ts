@@ -3,81 +3,49 @@ import * as net from "net";
 import * as fs from "fs-extra";
 import { ChildProcess, spawn } from "child_process";
 import { FileSystem } from "@server/fileSystem";
-import { Event } from "./event";
-import { Queue } from "./queue";
-import { isNotEmpty } from "@server/helpers/utils";
+import { generateUuid, isNotEmpty } from "@server/helpers/utils";
+import { MessageBatchItem } from "../objCHelperService/MessageBatchItem";
+
+export type TaskData = {
+    id: string;
+    promise: Promise<NodeJS.Dict<any>>;
+    resolve: (value: NodeJS.Dict<any>) => void;
+    reject: (reason?: Error) => void;
+    isComplete: boolean;
+};
 
 /**
  * A class that handles the communication with the swift helper process.
  */
- export class SwiftHelperService {
-    sockPath: string;
-
+export class SwiftHelperService {
     helperPath: string;
-
-    server: net.Server;
 
     helper: net.Socket = null;
 
     child: ChildProcess;
 
-    queue: Queue = new Queue();
-
-    private startServer() {
-        fs.removeSync(this.sockPath);
-        this.server = net.createServer(client => {
-            Server().log("Swift Helper connected");
-            client.on("end", () => {
-                this.helper = null;
-                Server().log("Swift Helper disconnected");
-            });
-
-            client.on("data", data => {
-                data.indexOf("\u0004")
-                // split data by the EOT character
-                const events = [];
-                let lastI = 0;
-                for (let i = 0; i < data.length; i++) {
-                    if (data[i] === 0x04) {
-                        events.push(data.slice(lastI, i));
-                        lastI = i + 1;
-                    }
-                }
-
-                events.forEach(event => {
-                    const msg = Event.fromBytes(event);
-                    this.queue.call(msg.uuid, msg.data);
-                });
-            });
-
-            this.helper = client;
-        });
-
-        this.server.listen(this.sockPath);
-    }
+    tasks: TaskData[];
 
     private runSwiftHelper() {
-        this.child = spawn(this.helperPath, [this.sockPath]);
+        this.child = spawn(this.helperPath);
         this.child.stdout.setEncoding("utf8");
 
         // we should listen to stdout data
         // so we can forward to the bb logger
         this.child.stdout.on("data", (data: string) => {
-            // multiple lines can be returned if written in quick succession
-            // therefore we should pass the ascii EOT (\u0004)
-            // at the end of each log and split by the EOT character
-            const lines = data.split("\u0004");
-            lines.pop();
-
-            for (const line of lines) {
-                const splitIndex = line.indexOf(":");
-                const level = line.substring(0, splitIndex);
-                if (["log", "error", "warn", "debug"].indexOf(level) >= 0) {
-                    const content = line.substring(splitIndex + 1);
-                    Server().log(`[Swift Helper] ${content}`, level as any);
-                } else {
-                    Server().log(`[Swift Helper] ${line}`, "debug");
+            console.log("STDOUT");
+            try {
+                const msg = JSON.parse(data);
+                console.log(msg);
+                if (msg?.id) {
+                    const task = this.tasks.find(task => task.id === msg.id);
+                    if (task) {
+                        task.resolve(msg?.data);
+                    }
                 }
+            } catch (ex) {
+                console.log("failed to decode data");
+                console.log(ex);
             }
         });
 
@@ -97,21 +65,15 @@ import { isNotEmpty } from "@server/helpers/utils";
      * Initializes the Swift Helper service.
      */
     start() {
-        Server().log("Starting Swift Helper...");
-
-        this.helperPath = `${FileSystem.resources}/swiftHelper`;
-        this.sockPath = `${FileSystem.baseDir}/swift-helper.sock`;
-
-        // Configure & start the socket server
-        this.startServer();
-
-        // we should set a 100 ms timeout to give time for the
-        // socket server to start before connecting with the helper
-        setTimeout(this.runSwiftHelper.bind(this), 100);
+        Server().log("Starting Objective-C Helper...");
+        this.tasks = [];
+        this.helperPath = `${FileSystem.resources}/bluebubblesObjcHelper`;
+        this.runSwiftHelper();
     }
 
     stop() {
-        Server().log('Stopping Swift Helper...');
+        Server().log("Stopping Objective-C Helper...");
+        this.tasks = [];
 
         if (this.child?.stdout) this.child.stdout.removeAllListeners();
         if (this.child?.stderr) this.child.stderr.removeAllListeners();
@@ -124,16 +86,57 @@ import { isNotEmpty } from "@server/helpers/utils";
             this.helper.destroy();
             this.helper = null;
         }
-
-        if (this.server) {
-            this.server.close();
-            this.server = null;
-        }
     }
 
     restart() {
         this.stop();
         this.start();
+    }
+
+    createNewTask(): TaskData {
+        const task: TaskData = {
+            id: generateUuid(),
+            promise: null,
+            resolve: null,
+            reject: null,
+            isComplete: false
+        };
+
+        task.promise = new Promise((resolve, reject) => {
+            task.resolve = (val: NodeJS.Dict<any>) => {
+                task.isComplete = true;
+                resolve(val);
+            };
+            task.reject = (reason: Error) => {
+                task.isComplete = true;
+                reject(reason);
+            };
+        });
+
+        this.tasks.push(task);
+        return task;
+    }
+
+    resolveTask(uuid: string, value: NodeJS.Dict<any>) {
+        const task = this.tasks.find(task => task.id === uuid);
+        if (task) {
+            task.resolve(value);
+        }
+    }
+
+    rejectTask(uuid: string, error: string) {
+        const task = this.tasks.find(task => task.id === uuid);
+        if (task) {
+            task.reject(new Error(error));
+        }
+    }
+
+    flushTasks() {
+        this.tasks.forEach(task => {
+            task.reject(new Error("Task was flushed"));
+        });
+
+        this.tasks = [];
     }
 
     /**
@@ -142,10 +145,20 @@ import { isNotEmpty } from "@server/helpers/utils";
      * @param {number} timeout The timeout in milliseconds, defaults to 1000.
      * @returns {Promise<Buffer | null>} A promise that resolves to the response message.
      */
-    private async sendSocketEvent(msg: Event, timeout=1000): Promise<Buffer | null> {
-        return new Promise(resolve => {
-            this.helper.write(msg.toBytes());
-            this.queue.enqueue(msg.uuid, resolve, timeout);
+    private async sendMessage(task: TaskData, data: NodeJS.Dict<any>, timeout = 500): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.child.stdin.write(JSON.stringify(data) + "\n", err => {
+                setTimeout(() => {
+                    if (task.isComplete) return;
+                    task.reject(new Error("Task timed out"));
+                }, timeout);
+
+                if (err) {
+                    reject(null);
+                } else {
+                    resolve(null);
+                }
+            });
         });
     }
 
@@ -154,27 +167,26 @@ import { isNotEmpty } from "@server/helpers/utils";
      * @param {Blob} blob The attributedBody blob to deserialize.
      * @returns {Promise<Record<string, any>>} The deserialized json object.
      */
-    async deserializeAttributedBody(blob: Blob | null): Promise<Record<string, any>> {
-        // if the blob is null or our helper isn't connected, we should return null
-        if (isNotEmpty(blob) && this.helper && this.helper.writable) {
-            try {
-                const msg = new Event("deserializeAttributedBody", Buffer.from(blob));
-                const buf = await this.sendSocketEvent(msg, 250);
-                // in case the helper process returns something weird,
-                // catch any exceptions that would come from deserializing it and return null
-                if (buf != null) {
-                    try {
-                        return JSON.parse(buf.toString());
-                    } catch (e) {
-                        Server().log("SwiftHelper returned invalid json: " + buf.toString(), "debug");
-                        Server().log(e);
-                    }
-                }
-            } catch (ex: any) {
-                Server().log(`Failed to deserialize Attributed Body! Error: ${ex?.message ?? String(ex)}`, 'debug');
+    async deserializeAttributedBody(bodies: MessageBatchItem[]): Promise<NodeJS.Dict<any>> {
+        const msgs = [];
+        for (const i of bodies) {
+            if (isNotEmpty(i.body)) {
+                const buff = Buffer.from(i.body);
+                msgs.push({
+                    id: i.id,
+                    payload: buff.toString("base64")
+                });
             }
         }
 
-        return null;
+        const task = this.createNewTask();
+        const payload = {
+            id: task.id,
+            type: "bulk-attributed-body",
+            data: msgs
+        };
+
+        await this.sendMessage(task, payload);
+        return await task.promise;
     }
 }

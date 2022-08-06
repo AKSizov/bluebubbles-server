@@ -1,3 +1,4 @@
+import { Server } from "@server";
 import { generateUuid } from "@server/helpers/utils";
 import { MessageBatchStatus, ObjCHelperService } from ".";
 import { MessageBatchItem } from "./MessageBatchItem";
@@ -69,7 +70,9 @@ export class MessageBatch {
         let finalStatus = MessageBatchStatus.FAILED;
 
         try {
-            const result = await ObjCHelperService.bulkDeserializeAttributedBody(this.items);
+            console.log("1");
+            const result = await Server().objcHelper.deserializeAttributedBody(this.items);
+            console.log("2");
 
             // Iterate over the results, and match them to the batch items
             for (const item of result?.data ?? []) {
@@ -81,7 +84,7 @@ export class MessageBatch {
 
             finalStatus = MessageBatchStatus.COMPLETED;
         } catch (ex: any) {
-            // Do nothing
+            console.log(ex);
         }
 
         this.rejectIncompleteItems(noResponseErr);

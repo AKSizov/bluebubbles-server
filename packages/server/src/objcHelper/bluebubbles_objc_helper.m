@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <readline/readline.h>
 
 BOOL isScalar(id object) {
     return [object isKindOfClass:[NSNumber class]] || [object isKindOfClass:[NSString class]];
@@ -118,7 +119,8 @@ void handleCommand(NSString *userInput) {
 
             NSData *dataOutput = [NSJSONSerialization dataWithJSONObject:outputDict options:0 error:&error];
             NSString *strOutput = [[NSString alloc]initWithData:dataOutput encoding:NSUTF8StringEncoding];
-            NSLog(@"%@", strOutput);
+            NSLog(@"Printing results to stdout...");
+            fprintf(stdout, "%s\n", [strOutput UTF8String]);
         }
     }
     @catch(id anException) {
@@ -128,13 +130,12 @@ void handleCommand(NSString *userInput) {
 
 int main(int argc, char** argv)
 {
-    NSArray *arguments = [[NSProcessInfo processInfo] arguments];
-    if (arguments.count <= 1) {
-        NSLog(@"Usage: bluebubbles_objc_helper '<JSON Data>'");
-        return 1;
+    // Objective-C continuously read from stdin and write to stdout
+    while (true) {
+        char *userInput = readline("> ");
+        handleCommand([NSString stringWithUTF8String:userInput]);
+        free(userInput);
     }
     
-    NSString *userInput = arguments[1];
-    handleCommand(userInput);
     return 0;
 }

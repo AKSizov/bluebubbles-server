@@ -36,7 +36,8 @@ import {
     IPCService,
     UpdateService,
     CloudflareService,
-    WebhookService
+    WebhookService,
+    SwiftHelperService
 } from "@server/services";
 import { EventCache } from "@server/eventCache";
 import { runTerminalScript, openSystemPreferences } from "@server/api/v1/apple/scripts";
@@ -149,6 +150,8 @@ class BlueBubblesServer extends EventEmitter {
 
     objcBatcher: UnarchiverBatcher;
 
+    objcHelper: SwiftHelperService;
+
     /**
      * Constructor to just initialize everything to null pretty much
      *
@@ -190,6 +193,7 @@ class BlueBubblesServer extends EventEmitter {
         this.isStopping = false;
 
         this.region = null;
+        this.objcHelper = null;
         this.objcBatcher = new UnarchiverBatcher({
             maxBatchSize: 1000,
             maxBatchCache: 10,
@@ -336,6 +340,13 @@ class BlueBubblesServer extends EventEmitter {
         }
 
         try {
+            this.log("Initializing Objective-C Helper service...");
+            this.objcHelper = new SwiftHelperService();
+        } catch (ex: any) {
+            this.log(`Failed to setup Objective-C Helper service! ${ex.message}`, "error");
+        }
+
+        try {
             this.log("Initializing proxy services...");
             this.proxyServices = [new NgrokService(), new LocalTunnelService(), new CloudflareService()];
         } catch (ex: any) {
@@ -389,6 +400,12 @@ class BlueBubblesServer extends EventEmitter {
             this.privateApiHelper.start();
         }
 
+        try {
+            this.objcHelper.start();
+        } catch (ex: any) {
+            this.log(`Failed to start Objective-C Helper Service! ${ex.message}`, "error");
+        }
+
         if (this.hasDiskAccess && isEmpty(this.chatListeners)) {
             this.log("Starting iMessage Database listeners...");
             this.startChatListeners();
@@ -416,6 +433,12 @@ class BlueBubblesServer extends EventEmitter {
             await this.privateApiHelper?.stop();
         } catch (ex: any) {
             this.log(`Failed to stop Private API Helper service! ${ex?.message ?? ex}`);
+        }
+
+        try {
+            this.objcHelper.stop();
+        } catch (ex: any) {
+            this.log(`Failed to stop Objective-C Helper service! ${ex?.message ?? ex}`);
         }
 
         try {
